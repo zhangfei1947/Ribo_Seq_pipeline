@@ -1,0 +1,36 @@
+Bootstrap: docker
+From: mambaorg/micromamba:2.0.5
+
+%post
+    micromamba install -y -n base -c conda-forge -c bioconda \
+        python=3.12 \
+        star=2.7.11b \
+        bowtie2=2.5.4 \
+        salmon=1.10.3 \
+        samtools=1.21 \
+        subread=2.0.8 \
+        cutadapt=5.0 \
+        fastp=0.24.0 \
+        umi_tools=1.1.6 \
+        fastqc=0.12.1 \
+        multiqc=1.27 \
+        pysam=0.22.1
+    micromamba clean --all --yes
+
+%environment
+    export PATH=/opt/conda/bin:$PATH
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
+
+%test
+    STAR --version
+    bowtie2 --version
+    salmon --version
+    samtools --version
+    featureCounts -v
+    python3 -c "import pysam"
+
+%labels
+    org.opencontainers.image.title dmel-riboseq-core
+    org.opencontainers.image.description "Pinned mapping, preprocessing, QC, and counting tools"
+

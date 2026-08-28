@@ -1,0 +1,3 @@
+study_id	contrast_id	test_condition	reference_condition	run_ribo_de	run_rna_de	run_dte
+example_study	treated_vs_control	treated	control	yes	yes	yes
+

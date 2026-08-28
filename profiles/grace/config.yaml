@@ -1,0 +1,32 @@
+executor: cluster-generic
+cluster-generic-submit-cmd: >-
+  python3 profiles/grace/submit.py
+  -A {resources.slurm_account}
+  -p {resources.slurm_partition}
+  -t {resources.runtime}
+  --mem={resources.mem_mb}M
+  --nodes=1
+  --ntasks=1
+  --cpus-per-task={threads}
+  -J smk-{rule}-{wildcards}
+  -o logs/slurm/{rule}.%j.out
+  -e logs/slurm/{rule}.%j.err
+cluster-generic-status-cmd: python3 profiles/grace/slurm_status.py
+cluster-generic-cancel-cmd: scancel
+
+default-resources:
+  - runtime=60
+  - mem_mb=4096
+  - disk_mb=4096
+  - slurm_account=lilab
+  - slurm_partition=short
+
+jobs: 100
+latency-wait: 60
+keep-going: true
+rerun-incomplete: true
+retries: 1
+printshellcmds: true
+show-failed-logs: true
+use-singularity: true
+singularity-args: "--cleanenv --bind /scratch"

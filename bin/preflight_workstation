@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+errors=0
+warnings=0
+
+ok() { printf 'OK: %s\n' "$1"; }
+warn() { printf 'WARN: %s\n' "$1"; warnings=$((warnings + 1)); }
+fail() { printf 'ERROR: %s\n' "$1"; errors=$((errors + 1)); }
+
+if [[ "$(uname -s)" == "Linux" ]]; then
+  ok "Linux host detected"
+else
+  fail "This deployment profile is intended for Linux"
+fi
+
+if command -v snakemake >/dev/null 2>&1; then
+  ok "Snakemake $(snakemake --version 2>/dev/null | head -n 1)"
+else
+  fail "snakemake is not on PATH; activate the workstation controller environment"
+fi
+
+if command -v apptainer >/dev/null 2>&1; then
+  ok "$(apptainer version 2>/dev/null | head -n 1)"
+elif command -v singularity >/dev/null 2>&1; then
+  warn "Found singularity but not apptainer; Snakemake 8 accepts it, but Apptainer is preferred"
+else
+  fail "apptainer/singularity is not installed"
+fi
+
+logical_cpus="$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '0')"
+if [[ "${logical_cpus}" -ge 12 ]]; then
+  ok "${logical_cpus} logical CPUs online"
+else
+  warn "Only ${logical_cpus} logical CPUs detected; lower cores in profiles/workstation/config.yaml"
+fi
+
+if [[ -r /proc/meminfo ]]; then
+  mem_kib="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)"
+  mem_gib=$((mem_kib / 1024 / 1024))
+  if [[ "${mem_gib}" -ge 30 ]]; then
+    ok "${mem_gib} GiB RAM detected"
+  else
+    warn "${mem_gib} GiB RAM detected; lower the mem_mb resource ceiling"
+  fi
+fi
+
+for image in \
+  "${project_root}/containers/images/riboseq-core.sif" \
+  "${project_root}/containers/images/riboseq-r.sif"; do
+  if [[ -r "${image}" ]]; then
+    ok "Readable container image: ${image}"
+  else
+    fail "Missing container image: ${image}"
+  fi
+done
+
+if [[ -r "${project_root}/containers/lock.tsv" ]]; then
+  ok "Container lock exists"
+else
+  fail "Missing containers/lock.tsv"
+fi
+
+filesystem="$(stat -f -c %T "${project_root}" 2>/dev/null || printf 'unknown')"
+case "${filesystem}" in
+  cifs|smb2)
+    fail "Project root is on ${filesystem}; move active work to local NVMe"
+    ;;
+  *)
+    ok "Project filesystem: ${filesystem}"
+    ;;
+esac
+
+free_kib="$(df -Pk "${project_root}" | awk 'NR == 2 {print $4}')"
+free_gib=$((free_kib / 1024 / 1024))
+if [[ "${free_gib}" -ge 200 ]]; then
+  ok "${free_gib} GiB free in project filesystem"
+else
+  warn "Only ${free_gib} GiB free; keep at least 200 GiB free on the 1 TB SSD before a new run"
+fi
+
+printf '\nSummary: %d error(s), %d warning(s)\n' "${errors}" "${warnings}"
+if [[ "${errors}" -ne 0 ]]; then
+  exit 1
+fi

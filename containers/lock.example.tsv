@@ -1,0 +1,3 @@
+role	image	sha256	software
+core	containers/images/riboseq-core.sif	REPLACE_WITH_SHA256	STAR=2.7.11b;Bowtie2=2.5.4;Salmon=1.10.3;samtools;subread;cutadapt;fastp;umi_tools;FastQC;MultiQC;pysam
+r	containers/images/riboseq-r.sif	REPLACE_WITH_SHA256	R=4.4;DESeq2;apeglm;ashr;ggplot2;data.table;pheatmap

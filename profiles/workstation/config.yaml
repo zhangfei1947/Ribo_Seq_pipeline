@@ -1,0 +1,89 @@
+# Local executor profile for the Ubuntu workstation deployment.
+#
+# Hardware target: Intel i5-13400 (16 logical CPUs), 32 GiB RAM.  Twelve
+# logical CPUs and 28 GiB are exposed to Snakemake so that Ubuntu, SSH, and
+# filesystem caches retain headroom.
+executor: local
+cores: 12
+
+# Snakemake schedules jobs only when both CPU and these global resources fit.
+# io_slots limits aggregate FASTQ/BAM I/O on the single NVMe hot disk without
+# applying the stricter serialization that was intended for a mechanical disk.
+resources:
+  - mem_mb=28672
+  - io_slots=4
+
+default-resources:
+  - runtime=60
+  - mem_mb=4096
+  - disk_mb=4096
+  - io_slots=0
+
+set-threads:
+  preprocess_run: 4
+  fastqc_raw1: 2
+  fastqc_raw2: 2
+  fastqc_processed1: 2
+  fastqc_processed2: 2
+  filter_ribo_contaminants: 8
+  align_star: 10
+  ribo_qc: 2
+  featurecounts_rna: 8
+  differential_analysis: 4
+
+# These replace conservative Grace allocations; the FlyBase Drosophila
+# indexes are small enough for these single-workstation limits.
+set-resources:
+  preprocess_run:
+    mem_mb: 6144
+    io_slots: 1
+  fastqc_raw1:
+    mem_mb: 3072
+    io_slots: 1
+  fastqc_raw2:
+    mem_mb: 3072
+    io_slots: 1
+  fastqc_processed1:
+    mem_mb: 3072
+    io_slots: 1
+  fastqc_processed2:
+    mem_mb: 3072
+    io_slots: 1
+  merge_library_read1:
+    mem_mb: 2048
+    io_slots: 1
+  merge_library_read2:
+    mem_mb: 2048
+    io_slots: 1
+  filter_ribo_contaminants:
+    mem_mb: 6144
+    io_slots: 1
+  align_star:
+    mem_mb: 14336
+    io_slots: 3
+  unique_bam:
+    mem_mb: 4096
+    io_slots: 1
+  umi_deduplication:
+    mem_mb: 6144
+    io_slots: 1
+  ribo_qc:
+    mem_mb: 8192
+    io_slots: 1
+  featurecounts_rna:
+    mem_mb: 8192
+    io_slots: 1
+  differential_analysis:
+    mem_mb: 20480
+
+latency-wait: 20
+keep-going: true
+rerun-incomplete: true
+retries: 1
+printshellcmds: true
+show-failed-logs: true
+
+# Apptainer is the maintained Singularity-compatible runtime.  Existing SIF
+# images and container: directives are reused unchanged.
+software-deployment-method: apptainer
+apptainer-args: "--cleanenv"

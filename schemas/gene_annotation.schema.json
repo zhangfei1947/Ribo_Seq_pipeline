@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ribo-seq-pipeline/gene-annotation/1.0",
+  "title": "Gene annotation export",
+  "type": "object",
+  "required": ["gene_id", "gene_symbol", "seqname", "start", "end", "strand", "gene_span_length", "exon_union_length", "cds_union_length", "annotation_release"],
+  "properties": {
+    "gene_id": {"type": "string", "pattern": "^FBgn"},
+    "gene_symbol": {"type": "string"},
+    "start": {"type": "integer", "minimum": 1},
+    "end": {"type": "integer", "minimum": 1},
+    "gene_span_length": {"type": "integer", "minimum": 1},
+    "exon_union_length": {"type": "integer", "minimum": 0},
+    "cds_union_length": {"type": "integer", "minimum": 0}
+  }
+}
+

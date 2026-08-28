@@ -1,0 +1,6 @@
+study_id	run_id	library_id	bio_sample_id	assay	condition	batch	fastq1	fastq2	layout	adapter_3p	strandedness	umi_pattern	ribo_protocol_group	source_accession	publication	nuclease	cycloheximide	size_selection	notes
+example_study	RIBO_CTRL_1	RIBO_CTRL_1	CTRL_1	ribo	control	batch1	/path/to/ribo_ctrl_1.fastq.gz		SE	infer	forward	none	protocol1			unknown	unknown	unknown	
+example_study	RNA_CTRL_1	RNA_CTRL_1	CTRL_1	rna	control	batch1	/path/to/rna_ctrl_1_R1.fastq.gz	/path/to/rna_ctrl_1_R2.fastq.gz	PE	infer	reverse	none				unknown	unknown	unknown	
+example_study	RIBO_TREAT_1	RIBO_TREAT_1	TREAT_1	ribo	treated	batch1	/path/to/ribo_treat_1.fastq.gz		SE	infer	forward	none	protocol1			unknown	unknown	unknown	
+example_study	RNA_TREAT_1	RNA_TREAT_1	TREAT_1	rna	treated	batch1	/path/to/rna_treat_1_R1.fastq.gz	/path/to/rna_treat_1_R2.fastq.gz	PE	infer	reverse	none				unknown	unknown	unknown	
+

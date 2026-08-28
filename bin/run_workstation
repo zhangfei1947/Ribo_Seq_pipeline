@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${project_root}"
+
+workstation_tmp="${RIBOSEQ_TMPDIR:-${project_root}/.snakemake/tmp}"
+mkdir -p "${workstation_tmp}"
+export TMPDIR="${workstation_tmp}"
+
+exec snakemake -s workflow/Snakefile --profile profiles/workstation "$@"
+

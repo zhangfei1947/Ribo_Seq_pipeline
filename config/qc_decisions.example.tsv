@@ -1,0 +1,5 @@
+library_id	include_assay_analysis	include_te	selected_lengths	offsets	offset_source	adapter_review	confirmed_adapter_3p	qc_status	reason	reviewer	review_date	decision_status	qc_fingerprint
+RIBO_CTRL_1	yes	yes	28,29,30	28:12,29:12,30:13	sample	accepted_inference	AGATCGGAAGAGCACACGTCTGAACTCCAGTCA	pass		REVIEWER	2026-08-20	reviewed	REPLACE_WITH_QC_FINGERPRINT
+RNA_CTRL_1	yes	yes				accepted_inference	AGATCGGAAGAGCACACGTCTGAACTCCAGTCA	pass		REVIEWER	2026-08-20	reviewed	REPLACE_WITH_QC_FINGERPRINT
+RIBO_TREAT_1	yes	yes	28,29,30	28:12,29:12,30:13	sample	accepted_inference	AGATCGGAAGAGCACACGTCTGAACTCCAGTCA	pass		REVIEWER	2026-08-20	reviewed	REPLACE_WITH_QC_FINGERPRINT
+RNA_TREAT_1	yes	yes				accepted_inference	AGATCGGAAGAGCACACGTCTGAACTCCAGTCA	pass		REVIEWER	2026-08-20	reviewed	REPLACE_WITH_QC_FINGERPRINT

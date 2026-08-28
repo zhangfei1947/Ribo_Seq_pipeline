@@ -1,0 +1,62 @@
+# Copy this file to config/config.yaml and replace every /CHANGE_ME path.
+project_name: dmel_riboseq
+analysis_id: analysis_001
+pipeline_config: config/config.yaml
+container_lock: containers/lock.tsv
+
+metadata:
+  samples: config/samples.tsv
+  contrasts: config/contrasts.tsv
+  qc_decisions: config/qc_decisions.tsv
+
+# Keep the repository, staged raw FASTQs, references, work/, results/, and
+# .snakemake/tmp on the SSD hot tier.  Archive finalized results to HDD/NAS.
+directories:
+  work: work
+  results: results
+  logs: logs
+
+reference:
+  release: FlyBase_r6.68_FB2026_02
+  source_dir: /CHANGE_ME/NVME/reference/dmel_r6.68
+  gtf: /CHANGE_ME/NVME/reference/dmel_r6.68/dmel-all-r6.68.gtf.gz
+  ribo_contaminant_index: /CHANGE_ME/NVME/reference/dmel_r6.68_indices/ribo_seq/bowtie2_contaminants/dmel-r6.68_contaminants
+  ribo_star_index: /CHANGE_ME/NVME/reference/dmel_r6.68_indices/ribo_seq/star_genome_short_reads
+  rna_star_index: /CHANGE_ME/NVME/reference/dmel_r6.68_indices/rna_seq/star_genome
+  salmon_index: /CHANGE_ME/NVME/reference/dmel_r6.68_indices/rna_seq/salmon_decoy_aware
+  expected_ribo_sjdb_overhang: 34
+  expected_rna_sjdb_overhang: 149
+  expected_genomeSAindexNbases: 12
+
+containers:
+  core: containers/images/riboseq-core.sif
+  r: containers/images/riboseq-r.sif
+
+preprocessing:
+  ribo_min_length: 20
+  ribo_max_length: 35
+  rna_min_length: 20
+  quality_trim_3p: 20
+  adapter_inference: fastp
+
+alignment:
+  ribo_star_mismatches: 2
+  ribo_multimap_report_max: 20
+  rna_multimap_report_max: 20
+
+ribo_qc:
+  candidate_lengths: "20-35"
+  offset_min: 6
+  offset_max: 20
+  min_reads_per_length: 100
+  metagene_upstream: 60
+  metagene_downstream: 90
+
+statistics:
+  alpha: 0.05
+  lfc_threshold: 1.0
+  min_total_count: 10
+
+optional:
+  fastqc: true
+  multiqc: true

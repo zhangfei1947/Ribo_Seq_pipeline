@@ -1,0 +1,8 @@
+name: riboseq-snakemake
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.12
+  - snakemake-minimal=8.30.0
+  - snakemake-executor-plugin-cluster-generic=1.0.9

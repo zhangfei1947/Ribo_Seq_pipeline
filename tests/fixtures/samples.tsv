@@ -1,0 +1,5 @@
+study_id	run_id	library_id	bio_sample_id	assay	condition	batch	fastq1	fastq2	layout	adapter_3p	strandedness	umi_pattern	ribo_protocol_group
+study	RIBO_C1	RIBO_C1	C1	ribo	control	b1	tests/fixtures/mini.fastq		SE	none	forward	none	p1
+study	RNA_C1	RNA_C1	C1	rna	control	b1	tests/fixtures/mini.fastq		SE	none	forward	none	
+study	RIBO_T1	RIBO_T1	T1	ribo	treated	b1	tests/fixtures/mini.fastq		SE	none	forward	none	p1
+study	RNA_T1	RNA_T1	T1	rna	treated	b1	tests/fixtures/mini.fastq		SE	none	forward	none	

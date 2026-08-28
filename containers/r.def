@@ -1,0 +1,44 @@
+Bootstrap: docker
+From: mambaorg/micromamba:2.0.5
+
+%post
+    micromamba install -y -n base -c conda-forge -c bioconda \
+        r-base=4.4.2 \
+        r-data.table=1.16.4 \
+        r-ggplot2=3.5.1 \
+        r-pheatmap=1.0.12 \
+        bioconductor-deseq2=1.46.0 \
+        bioconductor-apeglm=1.28.0 \
+        r-ashr=2.2_63 \
+        pandoc=3.6.2 \
+        curl
+
+    # GenomeInfoDbData is fetched by a conda post-link script from
+    # Bioconductor.  That script does not retry interrupted downloads, so
+    # install the pinned data package again with resume/retry and checksum
+    # verification.  This is harmless when the post-link download succeeded
+    # and repairs the environment when it did not.
+    genomeinfodb_archive=/tmp/GenomeInfoDbData_1.2.13.tar.gz
+    /opt/conda/bin/curl -fL \
+        --retry 12 \
+        --retry-all-errors \
+        --retry-delay 5 \
+        --output "$genomeinfodb_archive" \
+        https://depot.galaxyproject.org/software/bioconductor-genomeinfodbdata/bioconductor-genomeinfodbdata_1.2.13_src_all.tar.gz
+    echo "8798e58b89d84d9fa6a85f2191704668  $genomeinfodb_archive" | md5sum --check --strict
+    /opt/conda/bin/R CMD INSTALL "$genomeinfodb_archive"
+    rm -f "$genomeinfodb_archive"
+
+    micromamba clean --all --yes
+
+%environment
+    export PATH=/opt/conda/bin:$PATH
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
+
+%test
+    Rscript -e "library(DESeq2); library(apeglm); library(data.table); library(ggplot2)"
+
+%labels
+    org.opencontainers.image.title dmel-riboseq-r
+    org.opencontainers.image.description "Pinned R/Bioconductor differential analysis environment"

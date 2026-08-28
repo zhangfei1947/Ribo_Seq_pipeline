@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ribo-seq-pipeline/qc-decisions/1.0",
+  "title": "Reviewed library QC decision",
+  "type": "object",
+  "required": [
+    "library_id", "include_assay_analysis", "include_te", "selected_lengths",
+    "offsets", "offset_source", "adapter_review", "confirmed_adapter_3p",
+    "qc_status", "reason", "reviewer", "review_date", "decision_status",
+    "qc_fingerprint"
+  ],
+  "properties": {
+    "library_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"},
+    "include_assay_analysis": {"enum": ["yes", "no"]},
+    "include_te": {"enum": ["yes", "no"]},
+    "selected_lengths": {"type": "string"},
+    "offsets": {"type": "string"},
+    "offset_source": {"enum": ["", "sample", "pooled", "manual"]},
+    "adapter_review": {"enum": ["accepted_inference", "explicit", "none", "not_applicable"]},
+    "confirmed_adapter_3p": {"type": "string"},
+    "qc_status": {"enum": ["pass", "caution", "fail"]},
+    "decision_status": {"const": "reviewed"},
+    "review_date": {"type": "string", "format": "date"},
+    "qc_fingerprint": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

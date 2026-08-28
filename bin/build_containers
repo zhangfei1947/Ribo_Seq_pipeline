@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mkdir -p containers/images
+singularity build --fakeroot containers/images/riboseq-core.sif containers/core.def
+singularity build --fakeroot containers/images/riboseq-r.sif containers/r.def
+sha256sum containers/images/riboseq-core.sif containers/images/riboseq-r.sif
+

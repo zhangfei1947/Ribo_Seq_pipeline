@@ -1,0 +1,5 @@
+library_id	include_assay_analysis	include_te	selected_lengths	offsets	offset_source	adapter_review	confirmed_adapter_3p	qc_status	reason	reviewer	review_date	decision_status	qc_fingerprint
+RIBO_C1	yes	yes	28	28:12	sample	none	none	pass		test	2026-08-20	reviewed	test
+RNA_C1	yes	yes				none	none	pass		test	2026-08-20	reviewed	test
+RIBO_T1	yes	yes	28	28:12	sample	none	none	pass		test	2026-08-20	reviewed	test
+RNA_T1	yes	yes				none	none	pass		test	2026-08-20	reviewed	test

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ribo-seq-pipeline/samples/1.0",
+  "title": "Ribo-seq run metadata",
+  "type": "object",
+  "required": ["study_id", "run_id", "library_id", "bio_sample_id", "assay", "condition", "fastq1", "layout"],
+  "properties": {
+    "study_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "library_id": {"type": "string", "minLength": 1},
+    "bio_sample_id": {"type": "string", "minLength": 1},
+    "assay": {"enum": ["ribo", "rna"]},
+    "condition": {"type": "string", "minLength": 1},
+    "layout": {"enum": ["SE", "PE"]},
+    "fastq1": {"type": "string", "minLength": 1},
+    "fastq2": {"type": "string"},
+    "strandedness": {"enum": ["forward", "reverse", "unstranded"]},
+    "umi_pattern": {"type": "string"},
+    "adapter_3p": {"type": "string"},
+    "ribo_protocol_group": {"type": "string"}
+  },
+  "additionalProperties": true
+}

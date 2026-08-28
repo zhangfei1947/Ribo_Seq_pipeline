@@ -1,0 +1,807 @@
+"""Drosophila Ribo-seq/RNA-seq workflow: explicit QC review, then analysis."""
+
+from collections import defaultdict
+import csv
+from pathlib import Path
+import shlex
+
+
+configfile: "config/config.yaml"
+
+
+def read_tsv(path):
+    with open(path, encoding="utf-8") as handle:
+        return list(csv.DictReader(handle, delimiter="\t"))
+
+
+SAMPLE_FILE = config["metadata"]["samples"]
+CONTRAST_FILE = config["metadata"]["contrasts"]
+DECISION_FILE = config["metadata"]["qc_decisions"]
+CONFIG_FILE = config.get("pipeline_config", "config/config.yaml")
+CONTAINER_LOCK = config.get("container_lock", "containers/lock.tsv")
+SAMPLES = read_tsv(SAMPLE_FILE)
+CONTRASTS = read_tsv(CONTRAST_FILE)
+RUNS = {row["run_id"]: row for row in SAMPLES}
+LIBRARY_RUNS = defaultdict(list)
+for row in SAMPLES:
+    LIBRARY_RUNS[row["library_id"]].append(row["run_id"])
+LIBRARIES = {
+    library: {**RUNS[runs[0]], "run_ids": runs}
+    for library, runs in LIBRARY_RUNS.items()
+}
+STUDIES = sorted({row["study_id"] for row in SAMPLES})
+RIBO_LIBRARIES = sorted(library for library, row in LIBRARIES.items() if row["assay"] == "ribo")
+RNA_LIBRARIES = sorted(library for library, row in LIBRARIES.items() if row["assay"] == "rna")
+PE_RUNS = sorted(run for run, row in RUNS.items() if row["layout"] == "PE")
+PE_LIBRARIES = sorted(library for library, row in LIBRARIES.items() if row["layout"] == "PE")
+POOL_MEMBERS = defaultdict(list)
+LIBRARY_POOL = {}
+for library in RIBO_LIBRARIES:
+    row = LIBRARIES[library]
+    pool_id = f"{row['study_id']}__{row.get('ribo_protocol_group', '')}"
+    POOL_MEMBERS[pool_id].append(library)
+    LIBRARY_POOL[library] = pool_id
+RIBO_POOLS = sorted(POOL_MEMBERS)
+WORK = config["directories"]["work"]
+RESULTS = config["directories"]["results"]
+ANALYSIS_ID = config["analysis_id"]
+CORE = config["containers"]["core"]
+R_IMAGE = config["containers"]["r"]
+
+
+def result_dir(study):
+    return f"{RESULTS}/{study}/{ANALYSIS_ID}"
+
+
+def runs_for(wildcards):
+    return LIBRARY_RUNS[wildcards.library]
+
+
+def run_fastq2_arg(wildcards):
+    value = RUNS[wildcards.run].get("fastq2", "")
+    return f"--fastq2 {shlex.quote(value)}" if value else ""
+
+
+def library_read1(wildcards):
+    if LIBRARIES[wildcards.library]["assay"] == "ribo":
+        return f"{WORK}/depleted/{wildcards.library}.fastq.gz"
+    return f"{WORK}/libraries/{wildcards.library}.R1.fastq.gz"
+
+
+def library_read2_arg(wildcards):
+    row = LIBRARIES[wildcards.library]
+    if row["layout"] == "PE":
+        return f"--read2 {shlex.quote(f'{WORK}/libraries/{wildcards.library}.R2.fastq.gz')}"
+    return ""
+
+
+def star_index(wildcards):
+    key = "ribo_star_index" if LIBRARIES[wildcards.library]["assay"] == "ribo" else "rna_star_index"
+    return config["reference"][key]
+
+
+def strand_code(library):
+    return {"unstranded": 0, "forward": 1, "reverse": 2}[LIBRARIES[library]["strandedness"]]
+
+
+def feature_gtf(wildcards):
+    return (
+        "resources/generated/gene_cds_union.gtf"
+        if wildcards.region == "cds"
+        else "resources/generated/gene_exon_union.gtf"
+    )
+
+
+def paired_featurecounts(wildcards):
+    return "-p --countReadPairs -B -C" if LIBRARIES[wildcards.library]["layout"] == "PE" else ""
+
+
+QC_TEMPLATE = f"{RESULTS}/qc/qc_decisions.template.tsv"
+QC_FINGERPRINT = f"{RESULTS}/qc/qc_fingerprint.txt"
+CONTRAST_SENTINELS = [
+    f"{result_dir(row['study_id'])}/differential/{row['contrast_id']}/complete.txt"
+    for row in CONTRASTS
+]
+FINAL_SENTINELS = [f"{result_dir(study)}/FINALIZED" for study in STUDIES]
+FASTQC_TARGETS = []
+if config.get("optional", {}).get("fastqc", True):
+    FASTQC_TARGETS = (
+        expand(f"{RESULTS}/qc/fastqc/raw/{{run}}.R1.html", run=sorted(RUNS))
+        + expand(f"{RESULTS}/qc/fastqc/raw/{{run}}.R2.html", run=PE_RUNS)
+        + expand(f"{RESULTS}/qc/fastqc/processed/{{library}}.R1.html", library=sorted(LIBRARIES))
+        + expand(f"{RESULTS}/qc/fastqc/processed/{{library}}.R2.html", library=PE_LIBRARIES)
+    )
+MULTIQC_TARGETS = [f"{RESULTS}/qc/multiqc/multiqc_report.html"] if config.get("optional", {}).get("multiqc", True) else []
+
+
+rule all:
+    input:
+        FINAL_SENTINELS
+
+
+rule qc:
+    input:
+        QC_TEMPLATE,
+        QC_FINGERPRINT,
+        expand(f"{WORK}/alignment/{{library}}.analysis.bam.bai", library=sorted(LIBRARIES)),
+        expand(f"{RESULTS}/qc/ribo/{{library}}/summary.json", library=RIBO_LIBRARIES),
+        expand(f"{RESULTS}/qc/ribo/{{library}}/qc.html", library=RIBO_LIBRARIES),
+        expand(f"{RESULTS}/qc/ribo_pooled/{{pool}}/offset_recommendations.tsv", pool=RIBO_POOLS),
+        f"{RESULTS}/qc/replicate_correlations.tsv",
+        FASTQC_TARGETS,
+        MULTIQC_TARGETS,
+
+
+rule analysis:
+    input:
+        FINAL_SENTINELS
+
+
+rule validate_reference:
+    input:
+        gtf=config["reference"]["gtf"],
+    output:
+        "resources/generated/reference_validation.json"
+    params:
+        ribo_star=config["reference"]["ribo_star_index"],
+        rna_star=config["reference"]["rna_star_index"],
+        contaminant=config["reference"]["ribo_contaminant_index"],
+        ribo_overhang=config["reference"]["expected_ribo_sjdb_overhang"],
+        rna_overhang=config["reference"]["expected_rna_sjdb_overhang"],
+        sa_index=config["reference"]["expected_genomeSAindexNbases"],
+        release=config["reference"]["release"],
+    shell:
+        """
+        python3 workflow/scripts/validate_reference.py --gtf {input.gtf:q} \
+          --ribo-star {params.ribo_star:q} --rna-star {params.rna_star:q} \
+          --contaminant-prefix {params.contaminant:q} --ribo-overhang {params.ribo_overhang} \
+          --rna-overhang {params.rna_overhang} --sa-index-bases {params.sa_index} \
+          --release {params.release:q} --output {output:q}
+        """
+
+
+rule validate_containers:
+    input:
+        lock=CONTAINER_LOCK,
+    output:
+        "resources/generated/container_validation.json"
+    params:
+        images=" ".join(
+            f"--image {shlex.quote(role + '=' + config['containers'][role])}" for role in ("core", "r")
+        )
+    shell:
+        """
+        python3 workflow/scripts/validate_containers.py --lock {input.lock:q} {params.images} --output {output:q}
+        """
+
+
+rule validate_metadata:
+    input:
+        samples=SAMPLE_FILE,
+        contrasts=CONTRAST_FILE,
+    output:
+        report=f"{WORK}/metadata/validation.qc.json",
+        libraries=f"{WORK}/metadata/libraries.tsv",
+    log:
+        f"{config['directories']['logs']}/validate_metadata.log"
+    shell:
+        """
+        python3 workflow/scripts/validate_metadata.py \
+          --samples {input.samples:q} --contrasts {input.contrasts:q} --check-fastq \
+          --report {output.report:q} --libraries {output.libraries:q} \
+          > {log:q} 2>&1
+        """
+
+
+rule validate_reviewed_decisions:
+    input:
+        samples=SAMPLE_FILE,
+        contrasts=CONTRAST_FILE,
+        decisions=DECISION_FILE,
+        fingerprint=QC_FINGERPRINT,
+    output:
+        report=f"{WORK}/metadata/validation.analysis.json",
+        libraries=f"{WORK}/metadata/libraries.analysis.tsv",
+    log:
+        f"{config['directories']['logs']}/validate_reviewed_decisions.log"
+    shell:
+        """
+        python3 workflow/scripts/validate_metadata.py \
+          --samples {input.samples:q} --contrasts {input.contrasts:q} --check-fastq \
+          --decisions {input.decisions:q} --expected-qc-fingerprint-file {input.fingerprint:q} \
+          --report {output.report:q} --libraries {output.libraries:q} \
+          > {log:q} 2>&1
+        """
+
+
+rule build_annotation:
+    input:
+        gtf=config["reference"]["gtf"],
+        validation=rules.validate_reference.output,
+    output:
+        all_genes="resources/generated/gene_annotation.tsv",
+        cds_genes="resources/generated/cds_gene_annotation.tsv",
+        reps="resources/generated/representative_transcripts.tsv",
+        cds_gtf="resources/generated/gene_cds_union.gtf",
+        exon_gtf="resources/generated/gene_exon_union.gtf",
+        rep_cds="resources/generated/representative_cds.tsv",
+    log:
+        f"{config['directories']['logs']}/build_annotation.log"
+    shell:
+        """
+        python3 workflow/scripts/build_gene_annotation.py \
+          --gtf {input.gtf:q} --annotation-release {config[reference][release]:q} \
+          --all-genes {output.all_genes:q} --cds-genes {output.cds_genes:q} \
+          --representative-transcripts {output.reps:q} \
+          --gene-cds-gtf {output.cds_gtf:q} --gene-exon-gtf {output.exon_gtf:q} \
+          --representative-cds {output.rep_cds:q} > {log:q} 2>&1
+        """
+
+
+rule preprocess_run:
+    input:
+        metadata=rules.validate_metadata.output.report,
+        container_validation=rules.validate_containers.output,
+        read1=lambda wc: RUNS[wc.run]["fastq1"],
+    output:
+        read1=f"{WORK}/preprocessed/{{run}}.R1.fastq.gz",
+        read2=f"{WORK}/preprocessed/{{run}}.R2.fastq.gz",
+        report=f"{WORK}/preprocessed/{{run}}.json",
+    params:
+        read2=run_fastq2_arg,
+        layout=lambda wc: RUNS[wc.run]["layout"],
+        adapter=lambda wc: RUNS[wc.run].get("adapter_3p", "none"),
+        umi=lambda wc: RUNS[wc.run].get("umi_pattern", "none"),
+        minimum=lambda wc: config["preprocessing"]["ribo_min_length"] if RUNS[wc.run]["assay"] == "ribo" else config["preprocessing"]["rna_min_length"],
+        maximum=lambda wc: f"--maximum-length {config['preprocessing']['ribo_max_length']}" if RUNS[wc.run]["assay"] == "ribo" else "",
+        quality=config["preprocessing"]["quality_trim_3p"],
+    threads: 4
+    resources:
+        runtime=120,
+        mem_mb=8192,
+    container:
+        CORE
+    log:
+        f"{config['directories']['logs']}/preprocess/{{run}}.log"
+    shell:
+        """
+        python3 workflow/scripts/preprocess_reads.py \
+          --fastq1 {input.read1:q} {params.read2} --layout {params.layout:q} \
+          --adapter {params.adapter:q} --umi-pattern {params.umi:q} \
+          --minimum-length {params.minimum} {params.maximum} --quality-3p {params.quality} \
+          --threads {threads} --output1 {output.read1:q} --output2 {output.read2:q} \
+          --report {output.report:q} > {log:q} 2>&1
+        """
+
+
+rule fastqc_raw1:
+    input:
+        lambda wc: RUNS[wc.run]["fastq1"]
+    output:
+        html=f"{RESULTS}/qc/fastqc/raw/{{run}}.R1.html",
+        archive=f"{RESULTS}/qc/fastqc/raw/{{run}}.R1.zip",
+    threads: 2
+    resources:
+        runtime=60,
+        mem_mb=4096,
+    container:
+        CORE
+    shell:
+        "python3 workflow/scripts/run_fastqc.py --input {input:q} --html {output.html:q} --zip {output.archive:q} --threads {threads}"
+
+
+rule fastqc_raw2:
+    input:
+        lambda wc: RUNS[wc.run]["fastq2"]
+    output:
+        html=f"{RESULTS}/qc/fastqc/raw/{{run}}.R2.html",
+        archive=f"{RESULTS}/qc/fastqc/raw/{{run}}.R2.zip",
+    threads: 2
+    resources:
+        runtime=60,
+        mem_mb=4096,
+    container:
+        CORE
+    wildcard_constraints:
+        run="|".join(PE_RUNS)
+    shell:
+        "python3 workflow/scripts/run_fastqc.py --input {input:q} --html {output.html:q} --zip {output.archive:q} --threads {threads}"
+
+
+rule merge_library_read1:
+    input:
+        lambda wc: [f"{WORK}/preprocessed/{run}.R1.fastq.gz" for run in LIBRARY_RUNS[wc.library]]
+    output:
+        f"{WORK}/libraries/{{library}}.R1.fastq.gz"
+    container:
+        CORE
+    shell:
+        "python3 workflow/scripts/merge_fastq.py --inputs {input:q} --output {output:q}"
+
+
+rule merge_library_read2:
+    input:
+        lambda wc: [f"{WORK}/preprocessed/{run}.R2.fastq.gz" for run in LIBRARY_RUNS[wc.library]]
+    output:
+        f"{WORK}/libraries/{{library}}.R2.fastq.gz"
+    container:
+        CORE
+    shell:
+        "python3 workflow/scripts/merge_fastq.py --inputs {input:q} --output {output:q}"
+
+
+rule filter_ribo_contaminants:
+    input:
+        f"{WORK}/libraries/{{library}}.R1.fastq.gz"
+    output:
+        read=f"{WORK}/depleted/{{library}}.fastq.gz",
+        metrics=f"{WORK}/depleted/{{library}}.json",
+    params:
+        index=config["reference"]["ribo_contaminant_index"],
+    threads: 8
+    resources:
+        runtime=120,
+        mem_mb=8192,
+    container:
+        CORE
+    log:
+        f"{config['directories']['logs']}/contaminants/{{library}}.log"
+    wildcard_constraints:
+        library="|".join(RIBO_LIBRARIES)
+    shell:
+        """
+        python3 workflow/scripts/filter_contaminants.py --input {input:q} --output {output.read:q} \
+          --index {params.index:q} --threads {threads} --metrics {output.metrics:q} \
+          > {log:q} 2>&1
+        """
+
+
+rule fastqc_processed1:
+    input:
+        library_read1
+    output:
+        html=f"{RESULTS}/qc/fastqc/processed/{{library}}.R1.html",
+        archive=f"{RESULTS}/qc/fastqc/processed/{{library}}.R1.zip",
+    threads: 2
+    resources:
+        runtime=60,
+        mem_mb=4096,
+    container:
+        CORE
+    shell:
+        "python3 workflow/scripts/run_fastqc.py --input {input:q} --html {output.html:q} --zip {output.archive:q} --threads {threads}"
+
+
+rule fastqc_processed2:
+    input:
+        f"{WORK}/libraries/{{library}}.R2.fastq.gz"
+    output:
+        html=f"{RESULTS}/qc/fastqc/processed/{{library}}.R2.html",
+        archive=f"{RESULTS}/qc/fastqc/processed/{{library}}.R2.zip",
+    threads: 2
+    resources:
+        runtime=60,
+        mem_mb=4096,
+    container:
+        CORE
+    wildcard_constraints:
+        library="|".join(PE_LIBRARIES)
+    shell:
+        "python3 workflow/scripts/run_fastqc.py --input {input:q} --html {output.html:q} --zip {output.archive:q} --threads {threads}"
+
+
+rule align_star:
+    input:
+        reference_validation=rules.validate_reference.output,
+        read1=library_read1,
+        read2=lambda wc: f"{WORK}/libraries/{wc.library}.R2.fastq.gz",
+    output:
+        bam=temp(f"{WORK}/alignment/{{library}}.all.bam"),
+        bai=temp(f"{WORK}/alignment/{{library}}.all.bam.bai"),
+        star_log=f"{WORK}/alignment/{{library}}.Log.final.out",
+        metrics=f"{WORK}/alignment/{{library}}.json",
+    params:
+        read2=library_read2_arg,
+        layout=lambda wc: LIBRARIES[wc.library]["layout"],
+        assay=lambda wc: LIBRARIES[wc.library]["assay"],
+        index=star_index,
+        mismatch=lambda wc: config["alignment"]["ribo_star_mismatches"],
+        multimap=lambda wc: config["alignment"]["ribo_multimap_report_max"] if LIBRARIES[wc.library]["assay"] == "ribo" else config["alignment"]["rna_multimap_report_max"],
+    threads: 12
+    resources:
+        runtime=240,
+        mem_mb=48000,
+        slurm_partition="medium",
+    container:
+        CORE
+    log:
+        f"{config['directories']['logs']}/star/{{library}}.log"
+    shell:
+        """
+        python3 workflow/scripts/run_star.py --read1 {input.read1:q} {params.read2} \
+          --layout {params.layout:q} --assay {params.assay:q} --index {params.index:q} \
+          --output-bam {output.bam:q} --log-final {output.star_log:q} --metrics {output.metrics:q} \
+          --threads {threads} --mismatches {params.mismatch} --multimap-max {params.multimap} \
+          > {log:q} 2>&1
+        """
+
+
+rule unique_bam:
+    input:
+        f"{WORK}/alignment/{{library}}.all.bam"
+    output:
+        bam=temp(f"{WORK}/alignment/{{library}}.unique.bam"),
+        bai=temp(f"{WORK}/alignment/{{library}}.unique.bam.bai"),
+        metrics=f"{WORK}/alignment/{{library}}.read_fate.json",
+    container:
+        CORE
+    shell:
+        "python3 workflow/scripts/filter_unique_bam.py --input {input:q} --output {output.bam:q} --metrics {output.metrics:q}"
+
+
+rule umi_deduplication:
+    input:
+        bam=f"{WORK}/alignment/{{library}}.unique.bam",
+        bai=f"{WORK}/alignment/{{library}}.unique.bam.bai",
+    output:
+        bam=f"{WORK}/alignment/{{library}}.analysis.bam",
+        bai=f"{WORK}/alignment/{{library}}.analysis.bam.bai",
+        metrics=f"{WORK}/alignment/{{library}}.dedup.json",
+    params:
+        umi=lambda wc: LIBRARIES[wc.library].get("umi_pattern", "none"),
+        layout=lambda wc: LIBRARIES[wc.library]["layout"],
+        dedup_log=lambda wc: f"{config['directories']['logs']}/umi_dedup/{wc.library}.log",
+    container:
+        CORE
+    shell:
+        """
+        python3 workflow/scripts/apply_umi_dedup.py --input {input.bam:q} --input-index {input.bai:q} \
+          --output {output.bam:q} --output-index {output.bai:q} --umi-pattern {params.umi:q} \
+          --layout {params.layout:q} --metrics {output.metrics:q} --log {params.dedup_log:q}
+        """
+
+
+rule ribo_qc:
+    input:
+        bam=f"{WORK}/alignment/{{library}}.analysis.bam",
+        bai=f"{WORK}/alignment/{{library}}.analysis.bam.bai",
+        rep_cds=rules.build_annotation.output.rep_cds,
+        cds_gtf=rules.build_annotation.output.cds_gtf,
+        exon_gtf=rules.build_annotation.output.exon_gtf,
+    output:
+        length=f"{RESULTS}/qc/ribo/{{library}}/length_metrics.tsv",
+        offsets=f"{RESULTS}/qc/ribo/{{library}}/offset_recommendations.tsv",
+        candidates=f"{RESULTS}/qc/ribo/{{library}}/offset_candidates.tsv",
+        metagene=f"{RESULTS}/qc/ribo/{{library}}/metagene.tsv",
+        provisional=f"{RESULTS}/qc/ribo/{{library}}/provisional_counts.tsv",
+        summary=f"{RESULTS}/qc/ribo/{{library}}/summary.json",
+    params:
+        strandedness=lambda wc: LIBRARIES[wc.library]["strandedness"],
+        lengths=config["ribo_qc"]["candidate_lengths"],
+        offset_min=config["ribo_qc"]["offset_min"],
+        offset_max=config["ribo_qc"]["offset_max"],
+        minimum=config["ribo_qc"]["min_reads_per_length"],
+    threads: 2
+    resources:
+        runtime=180,
+        mem_mb=16000,
+        slurm_partition="medium",
+    container:
+        CORE
+    wildcard_constraints:
+        library="|".join(RIBO_LIBRARIES)
+    shell:
+        """
+        python3 workflow/scripts/ribo_qc.py --bam {input.bam:q} --representative-cds {input.rep_cds:q} \
+          --gene-cds-gtf {input.cds_gtf:q} --gene-exon-gtf {input.exon_gtf:q} \
+          --strandedness {params.strandedness:q} --candidate-lengths {params.lengths:q} \
+          --offset-min {params.offset_min} --offset-max {params.offset_max} \
+          --min-reads-per-length {params.minimum} --length-metrics {output.length:q} \
+          --offsets {output.offsets:q} --offset-candidates {output.candidates:q} --metagene {output.metagene:q} \
+          --provisional-counts {output.provisional:q} --summary {output.summary:q}
+        """
+
+
+rule pooled_ribo_offsets:
+    input:
+        lambda wc: [f"{RESULTS}/qc/ribo/{library}/offset_candidates.tsv" for library in POOL_MEMBERS[wc.pool]]
+    output:
+        f"{RESULTS}/qc/ribo_pooled/{{pool}}/offset_recommendations.tsv"
+    params:
+        minimum=config["ribo_qc"]["min_reads_per_length"],
+        candidate_args=lambda wc: " ".join(
+            f"--candidate {shlex.quote(RESULTS + '/qc/ribo/' + library + '/offset_candidates.tsv')}"
+            for library in POOL_MEMBERS[wc.pool]
+        ),
+    container:
+        CORE
+    shell:
+        """
+        python3 workflow/scripts/pool_offset_recommendations.py {params.candidate_args} \
+          --min-reads-per-length {params.minimum} --output {output:q}
+        """
+
+
+rule qc_replicate_correlations:
+    input:
+        libraries=rules.validate_metadata.output.libraries,
+        ribo=expand(f"{RESULTS}/qc/ribo/{{library}}/provisional_counts.tsv", library=RIBO_LIBRARIES),
+        rna=expand(f"{WORK}/counts/rna/{{library}}.exon.tsv", library=RNA_LIBRARIES),
+    output:
+        f"{RESULTS}/qc/replicate_correlations.tsv"
+    params:
+        count_args=" ".join(
+            [f"--count {shlex.quote(library + '=' + RESULTS + '/qc/ribo/' + library + '/provisional_counts.tsv')}" for library in RIBO_LIBRARIES]
+            + [f"--count {shlex.quote(library + '=' + WORK + '/counts/rna/' + library + '.exon.tsv')}" for library in RNA_LIBRARIES]
+        )
+    container:
+        CORE
+    shell:
+        "python3 workflow/scripts/qc_correlations.py --libraries {input.libraries:q} {params.count_args} --output {output:q}"
+
+
+rule plot_ribo_qc:
+    input:
+        lengths=f"{RESULTS}/qc/ribo/{{library}}/length_metrics.tsv",
+        offsets=f"{RESULTS}/qc/ribo/{{library}}/offset_recommendations.tsv",
+        metagene=f"{RESULTS}/qc/ribo/{{library}}/metagene.tsv",
+    output:
+        html=f"{RESULTS}/qc/ribo/{{library}}/qc.html",
+        length_png=f"{RESULTS}/qc/ribo/{{library}}/length_distribution.png",
+        length_pdf=f"{RESULTS}/qc/ribo/{{library}}/length_distribution.pdf",
+        offset_png=f"{RESULTS}/qc/ribo/{{library}}/offset_frame.png",
+        offset_pdf=f"{RESULTS}/qc/ribo/{{library}}/offset_frame.pdf",
+        metagene_png=f"{RESULTS}/qc/ribo/{{library}}/metagene.png",
+        metagene_pdf=f"{RESULTS}/qc/ribo/{{library}}/metagene.pdf",
+    params:
+        outdir=lambda wc: f"{RESULTS}/qc/ribo/{wc.library}",
+    container:
+        R_IMAGE
+    shell:
+        """
+        Rscript workflow/scripts/plot_ribo_qc.R --lengths {input.lengths:q} --offsets {input.offsets:q} \
+          --metagene {input.metagene:q} --library {wildcards.library:q} --outdir {params.outdir:q}
+        """
+
+
+rule qc_decision_template:
+    input:
+        libraries=rules.validate_metadata.output.libraries,
+        qc=expand(f"{RESULTS}/qc/ribo/{{library}}/summary.json", library=RIBO_LIBRARIES),
+        offsets=expand(f"{RESULTS}/qc/ribo/{{library}}/offset_recommendations.tsv", library=RIBO_LIBRARIES),
+        lengths=expand(f"{RESULTS}/qc/ribo/{{library}}/length_metrics.tsv", library=RIBO_LIBRARIES),
+        metagene=expand(f"{RESULTS}/qc/ribo/{{library}}/metagene.tsv", library=RIBO_LIBRARIES),
+        candidates=expand(f"{RESULTS}/qc/ribo/{{library}}/offset_candidates.tsv", library=RIBO_LIBRARIES),
+        pooled=expand(f"{RESULTS}/qc/ribo_pooled/{{pool}}/offset_recommendations.tsv", pool=RIBO_POOLS),
+        preprocess=expand(f"{WORK}/preprocessed/{{run}}.json", run=sorted(RUNS)),
+        mapping=expand(f"{WORK}/alignment/{{library}}.read_fate.json", library=sorted(LIBRARIES)),
+        correlations=rules.qc_replicate_correlations.output,
+    output:
+        template=QC_TEMPLATE,
+        fingerprint=QC_FINGERPRINT,
+    params:
+        offset_args=" ".join(
+            f"--offset-file {shlex.quote(library + '=' + RESULTS + '/qc/ribo/' + library + '/offset_recommendations.tsv')}"
+            for library in RIBO_LIBRARIES
+        ),
+        pooled_args=" ".join(
+            f"--pooled-offset-file {shlex.quote(library + '=' + RESULTS + '/qc/ribo_pooled/' + LIBRARY_POOL[library] + '/offset_recommendations.tsv')}"
+            for library in RIBO_LIBRARIES
+        ),
+    shell:
+        """
+        python3 workflow/scripts/make_qc_decisions.py --libraries {input.libraries:q} \
+          --qc-files {input.qc:q} {input.offsets:q} {input.lengths:q} {input.metagene:q} \
+          {input.candidates:q} {input.pooled:q} {input.preprocess:q} {input.mapping:q} {input.correlations:q} \
+          {params.offset_args} {params.pooled_args} \
+          --output {output.template:q} --fingerprint {output.fingerprint:q}
+        """
+
+
+rule multiqc:
+    input:
+        fastqc=FASTQC_TARGETS,
+        correlations=rules.qc_replicate_correlations.output,
+        ribo=expand(f"{RESULTS}/qc/ribo/{{library}}/summary.json", library=RIBO_LIBRARIES),
+    output:
+        f"{RESULTS}/qc/multiqc/multiqc_report.html"
+    params:
+        outdir=f"{RESULTS}/qc/multiqc"
+    container:
+        CORE
+    shell:
+        "multiqc {RESULTS}/qc {WORK}/preprocessed {WORK}/alignment {WORK}/depleted --force --outdir {params.outdir:q} --filename multiqc_report.html"
+
+
+rule count_ribo_psites:
+    input:
+        validated=rules.validate_reviewed_decisions.output.report,
+        decisions=DECISION_FILE,
+        bam=f"{WORK}/alignment/{{library}}.analysis.bam",
+        bai=f"{WORK}/alignment/{{library}}.analysis.bam.bai",
+        cds_gtf=rules.build_annotation.output.cds_gtf,
+    output:
+        counts=f"{WORK}/counts/ribo/{{library}}.tsv",
+        metrics=f"{WORK}/counts/ribo/{{library}}.fate.tsv",
+    params:
+        strandedness=lambda wc: LIBRARIES[wc.library]["strandedness"],
+    container:
+        CORE
+    wildcard_constraints:
+        library="|".join(RIBO_LIBRARIES)
+    shell:
+        """
+        python3 workflow/scripts/count_ribo_psites.py --bam {input.bam:q} --gene-cds-gtf {input.cds_gtf:q} \
+          --decisions {input.decisions:q} --library-id {wildcards.library:q} \
+          --strandedness {params.strandedness:q} --output {output.counts:q} --metrics {output.metrics:q}
+        """
+
+
+rule featurecounts_rna:
+    input:
+        bam=f"{WORK}/alignment/{{library}}.analysis.bam",
+        bai=f"{WORK}/alignment/{{library}}.analysis.bam.bai",
+        annotation=feature_gtf,
+    output:
+        raw=f"{WORK}/counts/rna/{{library}}.{{region}}.featureCounts.txt",
+        summary=f"{WORK}/counts/rna/{{library}}.{{region}}.featureCounts.txt.summary",
+        counts=f"{WORK}/counts/rna/{{library}}.{{region}}.tsv",
+    params:
+        strand=lambda wc: strand_code(wc.library),
+        paired=paired_featurecounts,
+        feature=lambda wc: "CDS" if wc.region == "cds" else "exon",
+    threads: 8
+    resources:
+        runtime=180,
+        mem_mb=16000,
+        slurm_partition="medium",
+    container:
+        CORE
+    wildcard_constraints:
+        library="|".join(RNA_LIBRARIES),
+        region="cds|exon"
+    shell:
+        """
+        featureCounts -T {threads} -F GTF -t {params.feature} -g gene_id -s {params.strand} \
+          {params.paired} -a {input.annotation:q} -o {output.raw:q} {input.bam:q} && \
+        python3 workflow/scripts/extract_featurecounts.py --input {output.raw:q} --output {output.counts:q}
+        """
+
+
+rule reserve_analysis:
+    input:
+        validation=rules.validate_reviewed_decisions.output.report,
+        reference=rules.validate_reference.output,
+        config=CONFIG_FILE,
+        samples=SAMPLE_FILE,
+        contrasts=CONTRAST_FILE,
+        decisions=DECISION_FILE,
+        container_lock=CONTAINER_LOCK,
+        code=[
+            "workflow/Snakefile",
+            "workflow/scripts/build_gene_annotation.py",
+            "workflow/scripts/ribo_qc.py",
+            "workflow/scripts/count_ribo_psites.py",
+            "workflow/scripts/differential_analysis.R",
+        ],
+    output:
+        f"{RESULTS}/{{study}}/{ANALYSIS_ID}/analysis_metadata.json"
+    params:
+        result_dir=lambda wc: result_dir(wc.study),
+        input_args=lambda wc, input: " ".join(f"--input {shlex.quote(str(path))}" for path in input),
+    shell:
+        """
+        python3 workflow/scripts/reserve_analysis.py --result-dir {params.result_dir:q} \
+          --study {wildcards.study:q} --analysis-id {ANALYSIS_ID:q} {params.input_args} --output {output:q}
+        """
+
+
+rule ribo_matrix:
+    input:
+        reservation=f"{RESULTS}/{{study}}/{ANALYSIS_ID}/analysis_metadata.json",
+        annotation=rules.build_annotation.output.cds_genes,
+        counts=lambda wc: [f"{WORK}/counts/ribo/{library}.tsv" for library, row in LIBRARIES.items() if row["study_id"] == wc.study and row["assay"] == "ribo"],
+    output:
+        f"{RESULTS}/{{study}}/{ANALYSIS_ID}/counts/ribo_cds_counts.tsv"
+    params:
+        args=lambda wc: " ".join(
+            f"--count {shlex.quote(library + '=' + WORK + '/counts/ribo/' + library + '.tsv')}"
+            for library, row in LIBRARIES.items() if row["study_id"] == wc.study and row["assay"] == "ribo"
+        )
+    container:
+        CORE
+    shell:
+        "python3 workflow/scripts/combine_count_matrix.py --annotation {input.annotation:q} {params.args} --output {output:q}"
+
+
+rule rna_matrix:
+    input:
+        reservation=f"{RESULTS}/{{study}}/{ANALYSIS_ID}/analysis_metadata.json",
+        annotation=lambda wc: "resources/generated/cds_gene_annotation.tsv" if wc.region == "cds" else "resources/generated/gene_annotation.tsv",
+        counts=lambda wc: [f"{WORK}/counts/rna/{library}.{wc.region}.tsv" for library, row in LIBRARIES.items() if row["study_id"] == wc.study and row["assay"] == "rna"],
+    output:
+        f"{RESULTS}/{{study}}/{ANALYSIS_ID}/counts/rna_{{region}}_counts.tsv"
+    params:
+        args=lambda wc: " ".join(
+            f"--count {shlex.quote(library + '=' + WORK + '/counts/rna/' + library + '.' + wc.region + '.tsv')}"
+            for library, row in LIBRARIES.items() if row["study_id"] == wc.study and row["assay"] == "rna"
+        )
+    container:
+        CORE
+    wildcard_constraints:
+        region="cds|exon"
+    shell:
+        "python3 workflow/scripts/combine_count_matrix.py --annotation {input.annotation:q} {params.args} --output {output:q}"
+
+
+rule differential_analysis:
+    input:
+        ribo=f"{RESULTS}/{{study}}/{ANALYSIS_ID}/counts/ribo_cds_counts.tsv",
+        rna_cds=f"{RESULTS}/{{study}}/{ANALYSIS_ID}/counts/rna_cds_counts.tsv",
+        rna_exon=f"{RESULTS}/{{study}}/{ANALYSIS_ID}/counts/rna_exon_counts.tsv",
+        libraries=rules.validate_reviewed_decisions.output.libraries,
+        decisions=DECISION_FILE,
+        contrasts=CONTRAST_FILE,
+    output:
+        complete=f"{RESULTS}/{{study}}/{ANALYSIS_ID}/differential/{{contrast}}/complete.txt"
+    params:
+        outdir=lambda wc: f"{RESULTS}/{wc.study}/{ANALYSIS_ID}/differential/{wc.contrast}",
+        alpha=config["statistics"]["alpha"],
+        lfc=config["statistics"]["lfc_threshold"],
+        min_count=config["statistics"]["min_total_count"],
+    threads: 4
+    resources:
+        runtime=240,
+        mem_mb=32000,
+        slurm_partition="medium",
+    container:
+        R_IMAGE
+    shell:
+        """
+        Rscript workflow/scripts/differential_analysis.R --ribo {input.ribo:q} --rna-cds {input.rna_cds:q} \
+          --rna-exon {input.rna_exon:q} --libraries {input.libraries:q} --decisions {input.decisions:q} \
+          --contrasts {input.contrasts:q} --study {wildcards.study:q} --contrast {wildcards.contrast:q} \
+          --outdir {params.outdir:q} --alpha {params.alpha} --lfc-threshold {params.lfc} \
+          --min-total-count {params.min_count}
+        """
+
+
+rule finalize_study:
+    input:
+        contrasts=lambda wc: [
+            f"{result_dir(wc.study)}/differential/{row['contrast_id']}/complete.txt"
+            for row in CONTRASTS if row["study_id"] == wc.study
+        ],
+        ribo=f"{RESULTS}/{{study}}/{ANALYSIS_ID}/counts/ribo_cds_counts.tsv",
+        rna_cds=f"{RESULTS}/{{study}}/{ANALYSIS_ID}/counts/rna_cds_counts.tsv",
+        rna_exon=f"{RESULTS}/{{study}}/{ANALYSIS_ID}/counts/rna_exon_counts.tsv",
+        validation=rules.validate_reviewed_decisions.output.report,
+    output:
+        provenance=f"{RESULTS}/{{study}}/{ANALYSIS_ID}/provenance.json",
+        checksums=f"{RESULTS}/{{study}}/{ANALYSIS_ID}/checksums.sha256",
+        complete=f"{RESULTS}/{{study}}/{ANALYSIS_ID}/FINALIZED",
+    params:
+        result_dir=lambda wc: result_dir(wc.study),
+        lock=CONTAINER_LOCK,
+    shell:
+        """
+        python3 workflow/scripts/finalize_analysis.py --project-root . --result-dir {params.result_dir:q} \
+          --study {wildcards.study:q} --analysis-id {ANALYSIS_ID:q} --config {CONFIG_FILE:q} \
+          --metadata {SAMPLE_FILE:q} --metadata {CONTRAST_FILE:q} --metadata {DECISION_FILE:q} \
+          --container-lock {params.lock:q} --provenance {output.provenance:q} \
+          --checksums {output.checksums:q} --complete {output.complete:q}
+        """
+
+
+rule cleanup_manifest:
+    input:
+        FINAL_SENTINELS
+    output:
+        f"{RESULTS}/cleanup/{ANALYSIS_ID}.tsv"
+    params:
+        completion_args=" ".join(f"--completion {shlex.quote(path)}" for path in FINAL_SENTINELS)
+    shell:
+        """
+        python3 workflow/scripts/make_cleanup_manifest.py --project-root . --work-dir {WORK:q} \
+          --analysis-id {ANALYSIS_ID:q} {params.completion_args} --output {output:q}
+        """

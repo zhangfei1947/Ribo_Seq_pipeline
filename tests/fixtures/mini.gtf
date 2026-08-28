@@ -1,0 +1,13 @@
+##gtf-version 2.2
+X	FlyBase	gene	100	200	.	+	.	gene_id "FBgn0000001"; gene_symbol "GeneA"; gene_biotype "protein_coding";
+X	FlyBase	mRNA	100	200	.	+	.	gene_id "FBgn0000001"; gene_symbol "GeneA"; transcript_id "FBtr0000001"; transcript_symbol "GeneA-RA";
+X	FlyBase	exon	100	130	.	+	.	gene_id "FBgn0000001"; gene_symbol "GeneA"; transcript_id "FBtr0000001";
+X	FlyBase	exon	150	200	.	+	.	gene_id "FBgn0000001"; gene_symbol "GeneA"; transcript_id "FBtr0000001";
+X	FlyBase	CDS	110	130	.	+	0	gene_id "FBgn0000001"; gene_symbol "GeneA"; transcript_id "FBtr0000001";
+X	FlyBase	CDS	150	180	.	+	0	gene_id "FBgn0000001"; gene_symbol "GeneA"; transcript_id "FBtr0000001";
+X	FlyBase	mRNA	100	190	.	+	.	gene_id "FBgn0000001"; gene_symbol "GeneA"; transcript_id "FBtr0000002"; transcript_symbol "GeneA-RB";
+X	FlyBase	exon	100	190	.	+	.	gene_id "FBgn0000001"; gene_symbol "GeneA"; transcript_id "FBtr0000002";
+X	FlyBase	CDS	120	170	.	+	0	gene_id "FBgn0000001"; gene_symbol "GeneA"; transcript_id "FBtr0000002";
+X	FlyBase	gene	300	370	.	-	.	gene_id "FBgn0000002"; gene_symbol "tRNA:Test"; gene_biotype "tRNA";
+X	FlyBase	exon	300	370	.	-	.	gene_id "FBgn0000002"; gene_symbol "tRNA:Test"; transcript_id "FBtr0000003";
+

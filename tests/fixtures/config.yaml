@@ -1,0 +1,24 @@
+analysis_id: syntax_check
+pipeline_config: tests/fixtures/config.yaml
+container_lock: containers/lock.example.tsv
+metadata:
+  samples: tests/fixtures/samples.tsv
+  contrasts: tests/fixtures/contrasts.tsv
+  qc_decisions: tests/fixtures/qc_decisions.tsv
+directories: {work: work, results: results, logs: logs}
+reference:
+  release: test
+  gtf: tests/fixtures/mini.gtf
+  ribo_contaminant_index: /reference/contaminants
+  ribo_star_index: /reference/ribo_star
+  rna_star_index: /reference/rna_star
+  salmon_index: /reference/salmon
+  expected_ribo_sjdb_overhang: 34
+  expected_rna_sjdb_overhang: 149
+  expected_genomeSAindexNbases: 12
+containers: {core: containers/images/riboseq-core.sif, r: containers/images/riboseq-r.sif}
+preprocessing: {ribo_min_length: 20, ribo_max_length: 35, rna_min_length: 20, quality_trim_3p: 20}
+alignment: {ribo_star_mismatches: 2, ribo_multimap_report_max: 20, rna_multimap_report_max: 20}
+ribo_qc: {candidate_lengths: "20-35", offset_min: 6, offset_max: 20, min_reads_per_length: 100}
+statistics: {alpha: 0.05, lfc_threshold: 1.0, min_total_count: 10}
+optional: {fastqc: false, multiqc: false}
