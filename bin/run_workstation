@@ -1,12 +1,70 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+pipeline_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+original_directory="$(pwd)"
+arguments=("$@")
+snakemake_arguments=()
+config_file=""
+
+for ((index = 0; index < ${#arguments[@]}; index++)); do
+  case "${arguments[index]}" in
+    --configfile)
+      if (( index + 1 >= ${#arguments[@]} )); then
+        printf 'Missing value after --configfile\n' >&2
+        exit 2
+      fi
+      config_file="${arguments[index + 1]}"
+      index=$((index + 1))
+      ;;
+    --configfile=*)
+      config_file="${arguments[index]#--configfile=}"
+      ;;
+    *)
+      snakemake_arguments+=("${arguments[index]}")
+      ;;
+  esac
+done
+
+if [[ -z "${config_file}" ]]; then
+  config_file="${pipeline_root}/config/config.yaml"
+elif [[ "${config_file}" != /* ]]; then
+  config_file="${original_directory}/${config_file}"
+fi
+
+if [[ ! -r "${config_file}" ]]; then
+  printf 'Configuration is not readable: %s\n' "${config_file}" >&2
+  exit 2
+fi
+config_file="$(realpath "${config_file}")"
+snakemake_arguments+=(--configfile "${config_file}")
+
+project_root="$(python3 - "${config_file}" <<'PY'
+from pathlib import Path
+import sys
+import yaml
+
+config_path = Path(sys.argv[1]).resolve()
+parsed = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+value = parsed.get("directories", {}).get("project_root")
+if value:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = (config_path.parent / path).resolve()
+else:
+    path = config_path.parent.parent
+print(path.resolve())
+PY
+)"
+
+mkdir -p "${project_root}"
 cd "${project_root}"
 
 workstation_tmp="${RIBOSEQ_TMPDIR:-${project_root}/.snakemake/tmp}"
 mkdir -p "${workstation_tmp}"
 export TMPDIR="${workstation_tmp}"
 
-exec snakemake -s workflow/Snakefile --profile profiles/workstation "$@"
-
+exec snakemake \
+  -s "${pipeline_root}/workflow/Snakefile" \
+  --profile "${pipeline_root}/profiles/workstation" \
+  "${snakemake_arguments[@]}"

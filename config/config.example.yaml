@@ -9,6 +9,8 @@ metadata:
   qc_decisions: config/qc_decisions.tsv
 
 directories:
+  project_root: .
+  generated: resources/generated
   work: work
   results: results
   logs: logs

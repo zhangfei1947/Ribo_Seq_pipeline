@@ -5,7 +5,7 @@ metadata:
   samples: tests/fixtures/samples.tsv
   contrasts: tests/fixtures/contrasts.tsv
   qc_decisions: tests/fixtures/qc_decisions.tsv
-directories: {work: work, results: results, logs: logs}
+directories: {project_root: ., generated: resources/generated, work: work, results: results, logs: logs}
 reference:
   release: test
   gtf: tests/fixtures/mini.gtf

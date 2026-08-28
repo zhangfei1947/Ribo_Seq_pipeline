@@ -81,10 +81,19 @@ production analysis.
 ## Project setup and execution
 
 ```bash
-cp config/config.workstation.example.yaml config/config.yaml
-cp config/samples.example.tsv config/samples.tsv
-cp config/contrasts.example.tsv config/contrasts.tsv
+analysis_root=/absolute/path/to/project/analysis
+mkdir -p "${analysis_root}/config"
+cp config/config.workstation.example.yaml "${analysis_root}/config/config.yaml"
+cp config/samples.example.tsv "${analysis_root}/config/samples.tsv"
+cp config/contrasts.example.tsv "${analysis_root}/config/contrasts.tsv"
 ```
+
+Set `directories.project_root` to `analysis_root` and
+`directories.generated` to `${analysis_root}/resources/generated`; use absolute
+paths for project metadata, work, results, logs, references, containers, and the
+container lock. The wrapper changes into `project_root` before starting Snakemake,
+which gives every project its own `.snakemake/` state and temporary directory.
+No pipeline-global `resources/generated` symlink is used.
 
 Edit `/CHANGE_ME` reference paths and metadata paths.  If raw data or references
 are mounted outside the home/project tree, expose their mount roots to Apptainer,
@@ -98,7 +107,7 @@ Run preflight and a dry run:
 
 ```bash
 bin/preflight_workstation
-bin/run_workstation -n qc
+bin/run_workstation -n qc --configfile "${analysis_root}/config/config.yaml"
 ```
 
 Start long runs inside `tmux` so an SSH or Tailscale interruption does not stop
@@ -107,20 +116,20 @@ the controlling Snakemake process:
 ```bash
 tmux new -s riboseq
 conda activate riboseq-snakemake-workstation
-bin/run_workstation qc
+bin/run_workstation qc --configfile "${analysis_root}/config/config.yaml"
 ```
 
 After reviewing and freezing `config/qc_decisions.tsv` as described in the main
 README, run:
 
 ```bash
-bin/run_workstation analysis
+bin/run_workstation analysis --configfile "${analysis_root}/config/config.yaml"
 ```
 
 The existing cleanup command remains unchanged.  Generate its manifest with the
 workstation wrapper, inspect it, and only then execute the guarded deletion:
 
 ```bash
-bin/run_workstation cleanup_manifest
+bin/run_workstation cleanup_manifest --configfile "${analysis_root}/config/config.yaml"
 bin/cleanup_intermediates --manifest results/cleanup/analysis_001.tsv --analysis-id analysis_001
 ```

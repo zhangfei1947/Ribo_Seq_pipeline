@@ -10,6 +10,16 @@ pausing are outside v1. The supplied Salmon decoy-aware index is retained for a
 future optional transcript-level branch; v1 TE deliberately uses genome-aligned,
 gene-level RNA CDS counts so its feature definition matches Ribo CDS counts.
 
+## Project isolation
+
+All mutable state is project-owned. `directories.project_root` is the Snakemake
+working directory and therefore owns `.snakemake/` and temporary files;
+`directories.generated` owns reference/container validation records and derived
+gene/CDS/exon annotations. Pipeline source, profiles, and immutable containers may
+be shared, but no mutable symlink or generated output is stored in the pipeline
+checkout. This permits sequential or concurrent projects without cross-project
+state reuse.
+
 ## Annotation
 
 FlyBase r6.68 FBgn identifiers are primary keys. Gene symbols are display-only

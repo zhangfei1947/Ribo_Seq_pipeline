@@ -55,16 +55,25 @@ environment and Singularity images on Grace.
 
 ## Start a project
 
+Keep mutable project state outside the pipeline checkout. Each project config
+must set `directories.project_root` and `directories.generated`; the workstation
+wrapper then runs Snakemake from that project root, so `.snakemake/`, temporary
+files, derived annotations, work files, and results cannot collide with another
+project.
+
 ```bash
-cp config/config.example.yaml config/config.yaml
-cp config/samples.example.tsv config/samples.tsv
-cp config/contrasts.example.tsv config/contrasts.tsv
+analysis_root=/absolute/path/to/project/analysis
+mkdir -p "${analysis_root}/config"
+cp config/config.example.yaml "${analysis_root}/config/config.yaml"
+cp config/samples.example.tsv "${analysis_root}/config/samples.tsv"
+cp config/contrasts.example.tsv "${analysis_root}/config/contrasts.tsv"
 ```
 
 Edit the three copied files, verify the reference and SIF paths, then run:
 
 ```bash
-snakemake -s workflow/Snakefile --profile profiles/grace qc
+snakemake -s workflow/Snakefile --profile profiles/grace \
+  --configfile "${analysis_root}/config/config.yaml" qc
 ```
 
 Review `results/qc/multiqc/multiqc_report.html`, every per-library Ribo QC table,
@@ -74,7 +83,8 @@ and `results/qc/replicate_correlations.tsv`. Copy
 lengths and `length:offset` pairs. Then run:
 
 ```bash
-snakemake -s workflow/Snakefile --profile profiles/grace analysis
+snakemake -s workflow/Snakefile --profile profiles/grace \
+  --configfile "${analysis_root}/config/config.yaml" analysis
 ```
 
 If a library has too few reads for a stable sample-specific offset, the template

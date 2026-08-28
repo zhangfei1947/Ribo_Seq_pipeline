@@ -12,6 +12,8 @@ metadata:
 # Keep the repository, staged raw FASTQs, references, work/, results/, and
 # .snakemake/tmp on the SSD hot tier.  Archive finalized results to HDD/NAS.
 directories:
+  project_root: /CHANGE_ME/NVME/project/analysis
+  generated: /CHANGE_ME/NVME/project/analysis/resources/generated
   work: work
   results: results
   logs: logs

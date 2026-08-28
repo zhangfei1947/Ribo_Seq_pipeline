@@ -5,8 +5,11 @@ import csv
 from pathlib import Path
 import shlex
 
+PIPELINE_ROOT = Path(workflow.basedir).resolve().parent
+SCRIPTS = PIPELINE_ROOT / "workflow" / "scripts"
 
-configfile: "config/config.yaml"
+
+configfile: str(PIPELINE_ROOT / "config" / "config.yaml")
 
 
 def read_tsv(path):
@@ -17,8 +20,12 @@ def read_tsv(path):
 SAMPLE_FILE = config["metadata"]["samples"]
 CONTRAST_FILE = config["metadata"]["contrasts"]
 DECISION_FILE = config["metadata"]["qc_decisions"]
-CONFIG_FILE = config.get("pipeline_config", "config/config.yaml")
-CONTAINER_LOCK = config.get("container_lock", "containers/lock.tsv")
+CONFIG_FILE = config.get("pipeline_config", str(PIPELINE_ROOT / "config" / "config.yaml"))
+CONTAINER_LOCK = config.get("container_lock", str(PIPELINE_ROOT / "containers" / "lock.tsv"))
+PROJECT_ROOT = config["directories"].get("project_root", ".")
+GENERATED = config["directories"].get(
+    "generated", f"{PROJECT_ROOT}/resources/generated"
+)
 SAMPLES = read_tsv(SAMPLE_FILE)
 CONTRASTS = read_tsv(CONTRAST_FILE)
 RUNS = {row["run_id"]: row for row in SAMPLES}
@@ -86,9 +93,9 @@ def strand_code(library):
 
 def feature_gtf(wildcards):
     return (
-        "resources/generated/gene_cds_union.gtf"
+        f"{GENERATED}/gene_cds_union.gtf"
         if wildcards.region == "cds"
-        else "resources/generated/gene_exon_union.gtf"
+        else f"{GENERATED}/gene_exon_union.gtf"
     )
 
 
@@ -141,7 +148,7 @@ rule validate_reference:
     input:
         gtf=config["reference"]["gtf"],
     output:
-        "resources/generated/reference_validation.json"
+        f"{GENERATED}/reference_validation.json"
     params:
         ribo_star=config["reference"]["ribo_star_index"],
         rna_star=config["reference"]["rna_star_index"],
@@ -152,7 +159,7 @@ rule validate_reference:
         release=config["reference"]["release"],
     shell:
         """
-        python3 workflow/scripts/validate_reference.py --gtf {input.gtf:q} \
+        python3 {SCRIPTS}/validate_reference.py --gtf {input.gtf:q} \
           --ribo-star {params.ribo_star:q} --rna-star {params.rna_star:q} \
           --contaminant-prefix {params.contaminant:q} --ribo-overhang {params.ribo_overhang} \
           --rna-overhang {params.rna_overhang} --sa-index-bases {params.sa_index} \
@@ -164,14 +171,14 @@ rule validate_containers:
     input:
         lock=CONTAINER_LOCK,
     output:
-        "resources/generated/container_validation.json"
+        f"{GENERATED}/container_validation.json"
     params:
         images=" ".join(
             f"--image {shlex.quote(role + '=' + config['containers'][role])}" for role in ("core", "r")
         )
     shell:
         """
-        python3 workflow/scripts/validate_containers.py --lock {input.lock:q} {params.images} --output {output:q}
+        python3 {SCRIPTS}/validate_containers.py --lock {input.lock:q} {params.images} --output {output:q}
         """
 
 
@@ -186,7 +193,7 @@ rule validate_metadata:
         f"{config['directories']['logs']}/validate_metadata.log"
     shell:
         """
-        python3 workflow/scripts/validate_metadata.py \
+        python3 {SCRIPTS}/validate_metadata.py \
           --samples {input.samples:q} --contrasts {input.contrasts:q} --check-fastq \
           --report {output.report:q} --libraries {output.libraries:q} \
           > {log:q} 2>&1
@@ -206,7 +213,7 @@ rule validate_reviewed_decisions:
         f"{config['directories']['logs']}/validate_reviewed_decisions.log"
     shell:
         """
-        python3 workflow/scripts/validate_metadata.py \
+        python3 {SCRIPTS}/validate_metadata.py \
           --samples {input.samples:q} --contrasts {input.contrasts:q} --check-fastq \
           --decisions {input.decisions:q} --expected-qc-fingerprint-file {input.fingerprint:q} \
           --report {output.report:q} --libraries {output.libraries:q} \
@@ -219,17 +226,17 @@ rule build_annotation:
         gtf=config["reference"]["gtf"],
         validation=rules.validate_reference.output,
     output:
-        all_genes="resources/generated/gene_annotation.tsv",
-        cds_genes="resources/generated/cds_gene_annotation.tsv",
-        reps="resources/generated/representative_transcripts.tsv",
-        cds_gtf="resources/generated/gene_cds_union.gtf",
-        exon_gtf="resources/generated/gene_exon_union.gtf",
-        rep_cds="resources/generated/representative_cds.tsv",
+        all_genes=f"{GENERATED}/gene_annotation.tsv",
+        cds_genes=f"{GENERATED}/cds_gene_annotation.tsv",
+        reps=f"{GENERATED}/representative_transcripts.tsv",
+        cds_gtf=f"{GENERATED}/gene_cds_union.gtf",
+        exon_gtf=f"{GENERATED}/gene_exon_union.gtf",
+        rep_cds=f"{GENERATED}/representative_cds.tsv",
     log:
         f"{config['directories']['logs']}/build_annotation.log"
     shell:
         """
-        python3 workflow/scripts/build_gene_annotation.py \
+        python3 {SCRIPTS}/build_gene_annotation.py \
           --gtf {input.gtf:q} --annotation-release {config[reference][release]:q} \
           --all-genes {output.all_genes:q} --cds-genes {output.cds_genes:q} \
           --representative-transcripts {output.reps:q} \
@@ -265,7 +272,7 @@ rule preprocess_run:
         f"{config['directories']['logs']}/preprocess/{{run}}.log"
     shell:
         """
-        python3 workflow/scripts/preprocess_reads.py \
+        python3 {SCRIPTS}/preprocess_reads.py \
           --fastq1 {input.read1:q} {params.read2} --layout {params.layout:q} \
           --adapter {params.adapter:q} --umi-pattern {params.umi:q} \
           --minimum-length {params.minimum} {params.maximum} --quality-3p {params.quality} \
@@ -287,7 +294,7 @@ rule fastqc_raw1:
     container:
         CORE
     shell:
-        "python3 workflow/scripts/run_fastqc.py --input {input:q} --html {output.html:q} --zip {output.archive:q} --threads {threads}"
+        "python3 {SCRIPTS}/run_fastqc.py --input {input:q} --html {output.html:q} --zip {output.archive:q} --threads {threads}"
 
 
 rule fastqc_raw2:
@@ -305,7 +312,7 @@ rule fastqc_raw2:
     wildcard_constraints:
         run="|".join(PE_RUNS)
     shell:
-        "python3 workflow/scripts/run_fastqc.py --input {input:q} --html {output.html:q} --zip {output.archive:q} --threads {threads}"
+        "python3 {SCRIPTS}/run_fastqc.py --input {input:q} --html {output.html:q} --zip {output.archive:q} --threads {threads}"
 
 
 rule merge_library_read1:
@@ -316,7 +323,7 @@ rule merge_library_read1:
     container:
         CORE
     shell:
-        "python3 workflow/scripts/merge_fastq.py --inputs {input:q} --output {output:q}"
+        "python3 {SCRIPTS}/merge_fastq.py --inputs {input:q} --output {output:q}"
 
 
 rule merge_library_read2:
@@ -327,7 +334,7 @@ rule merge_library_read2:
     container:
         CORE
     shell:
-        "python3 workflow/scripts/merge_fastq.py --inputs {input:q} --output {output:q}"
+        "python3 {SCRIPTS}/merge_fastq.py --inputs {input:q} --output {output:q}"
 
 
 rule filter_ribo_contaminants:
@@ -350,7 +357,7 @@ rule filter_ribo_contaminants:
         library="|".join(RIBO_LIBRARIES)
     shell:
         """
-        python3 workflow/scripts/filter_contaminants.py --input {input:q} --output {output.read:q} \
+        python3 {SCRIPTS}/filter_contaminants.py --input {input:q} --output {output.read:q} \
           --index {params.index:q} --threads {threads} --metrics {output.metrics:q} \
           > {log:q} 2>&1
         """
@@ -369,7 +376,7 @@ rule fastqc_processed1:
     container:
         CORE
     shell:
-        "python3 workflow/scripts/run_fastqc.py --input {input:q} --html {output.html:q} --zip {output.archive:q} --threads {threads}"
+        "python3 {SCRIPTS}/run_fastqc.py --input {input:q} --html {output.html:q} --zip {output.archive:q} --threads {threads}"
 
 
 rule fastqc_processed2:
@@ -387,7 +394,7 @@ rule fastqc_processed2:
     wildcard_constraints:
         library="|".join(PE_LIBRARIES)
     shell:
-        "python3 workflow/scripts/run_fastqc.py --input {input:q} --html {output.html:q} --zip {output.archive:q} --threads {threads}"
+        "python3 {SCRIPTS}/run_fastqc.py --input {input:q} --html {output.html:q} --zip {output.archive:q} --threads {threads}"
 
 
 rule align_star:
@@ -418,7 +425,7 @@ rule align_star:
         f"{config['directories']['logs']}/star/{{library}}.log"
     shell:
         """
-        python3 workflow/scripts/run_star.py --read1 {input.read1:q} {params.read2} \
+        python3 {SCRIPTS}/run_star.py --read1 {input.read1:q} {params.read2} \
           --layout {params.layout:q} --assay {params.assay:q} --index {params.index:q} \
           --output-bam {output.bam:q} --log-final {output.star_log:q} --metrics {output.metrics:q} \
           --threads {threads} --mismatches {params.mismatch} --multimap-max {params.multimap} \
@@ -436,7 +443,7 @@ rule unique_bam:
     container:
         CORE
     shell:
-        "python3 workflow/scripts/filter_unique_bam.py --input {input:q} --output {output.bam:q} --metrics {output.metrics:q}"
+        "python3 {SCRIPTS}/filter_unique_bam.py --input {input:q} --output {output.bam:q} --metrics {output.metrics:q}"
 
 
 rule umi_deduplication:
@@ -455,7 +462,7 @@ rule umi_deduplication:
         CORE
     shell:
         """
-        python3 workflow/scripts/apply_umi_dedup.py --input {input.bam:q} --input-index {input.bai:q} \
+        python3 {SCRIPTS}/apply_umi_dedup.py --input {input.bam:q} --input-index {input.bai:q} \
           --output {output.bam:q} --output-index {output.bai:q} --umi-pattern {params.umi:q} \
           --layout {params.layout:q} --metrics {output.metrics:q} --log {params.dedup_log:q}
         """
@@ -492,7 +499,7 @@ rule ribo_qc:
         library="|".join(RIBO_LIBRARIES)
     shell:
         """
-        python3 workflow/scripts/ribo_qc.py --bam {input.bam:q} --representative-cds {input.rep_cds:q} \
+        python3 {SCRIPTS}/ribo_qc.py --bam {input.bam:q} --representative-cds {input.rep_cds:q} \
           --gene-cds-gtf {input.cds_gtf:q} --gene-exon-gtf {input.exon_gtf:q} \
           --strandedness {params.strandedness:q} --candidate-lengths {params.lengths:q} \
           --offset-min {params.offset_min} --offset-max {params.offset_max} \
@@ -517,7 +524,7 @@ rule pooled_ribo_offsets:
         CORE
     shell:
         """
-        python3 workflow/scripts/pool_offset_recommendations.py {params.candidate_args} \
+        python3 {SCRIPTS}/pool_offset_recommendations.py {params.candidate_args} \
           --min-reads-per-length {params.minimum} --output {output:q}
         """
 
@@ -537,7 +544,7 @@ rule qc_replicate_correlations:
     container:
         CORE
     shell:
-        "python3 workflow/scripts/qc_correlations.py --libraries {input.libraries:q} {params.count_args} --output {output:q}"
+        "python3 {SCRIPTS}/qc_correlations.py --libraries {input.libraries:q} {params.count_args} --output {output:q}"
 
 
 rule plot_ribo_qc:
@@ -559,7 +566,7 @@ rule plot_ribo_qc:
         R_IMAGE
     shell:
         """
-        Rscript workflow/scripts/plot_ribo_qc.R --lengths {input.lengths:q} --offsets {input.offsets:q} \
+        Rscript {SCRIPTS}/plot_ribo_qc.R --lengths {input.lengths:q} --offsets {input.offsets:q} \
           --metagene {input.metagene:q} --library {wildcards.library:q} --outdir {params.outdir:q}
         """
 
@@ -590,7 +597,7 @@ rule qc_decision_template:
         ),
     shell:
         """
-        python3 workflow/scripts/make_qc_decisions.py --libraries {input.libraries:q} \
+        python3 {SCRIPTS}/make_qc_decisions.py --libraries {input.libraries:q} \
           --qc-files {input.qc:q} {input.offsets:q} {input.lengths:q} {input.metagene:q} \
           {input.candidates:q} {input.pooled:q} {input.preprocess:q} {input.mapping:q} {input.correlations:q} \
           {params.offset_args} {params.pooled_args} \
@@ -631,7 +638,7 @@ rule count_ribo_psites:
         library="|".join(RIBO_LIBRARIES)
     shell:
         """
-        python3 workflow/scripts/count_ribo_psites.py --bam {input.bam:q} --gene-cds-gtf {input.cds_gtf:q} \
+        python3 {SCRIPTS}/count_ribo_psites.py --bam {input.bam:q} --gene-cds-gtf {input.cds_gtf:q} \
           --decisions {input.decisions:q} --library-id {wildcards.library:q} \
           --strandedness {params.strandedness:q} --output {output.counts:q} --metrics {output.metrics:q}
         """
@@ -664,7 +671,7 @@ rule featurecounts_rna:
         """
         featureCounts -T {threads} -F GTF -t {params.feature} -g gene_id -s {params.strand} \
           {params.paired} -a {input.annotation:q} -o {output.raw:q} {input.bam:q} && \
-        python3 workflow/scripts/extract_featurecounts.py --input {output.raw:q} --output {output.counts:q}
+        python3 {SCRIPTS}/extract_featurecounts.py --input {output.raw:q} --output {output.counts:q}
         """
 
 
@@ -678,11 +685,11 @@ rule reserve_analysis:
         decisions=DECISION_FILE,
         container_lock=CONTAINER_LOCK,
         code=[
-            "workflow/Snakefile",
-            "workflow/scripts/build_gene_annotation.py",
-            "workflow/scripts/ribo_qc.py",
-            "workflow/scripts/count_ribo_psites.py",
-            "workflow/scripts/differential_analysis.R",
+            str(PIPELINE_ROOT / "workflow" / "Snakefile"),
+            str(SCRIPTS / "build_gene_annotation.py"),
+            str(SCRIPTS / "ribo_qc.py"),
+            str(SCRIPTS / "count_ribo_psites.py"),
+            str(SCRIPTS / "differential_analysis.R"),
         ],
     output:
         f"{RESULTS}/{{study}}/{ANALYSIS_ID}/analysis_metadata.json"
@@ -691,7 +698,7 @@ rule reserve_analysis:
         input_args=lambda wc, input: " ".join(f"--input {shlex.quote(str(path))}" for path in input),
     shell:
         """
-        python3 workflow/scripts/reserve_analysis.py --result-dir {params.result_dir:q} \
+        python3 {SCRIPTS}/reserve_analysis.py --result-dir {params.result_dir:q} \
           --study {wildcards.study:q} --analysis-id {ANALYSIS_ID:q} {params.input_args} --output {output:q}
         """
 
@@ -711,13 +718,13 @@ rule ribo_matrix:
     container:
         CORE
     shell:
-        "python3 workflow/scripts/combine_count_matrix.py --annotation {input.annotation:q} {params.args} --output {output:q}"
+        "python3 {SCRIPTS}/combine_count_matrix.py --annotation {input.annotation:q} {params.args} --output {output:q}"
 
 
 rule rna_matrix:
     input:
         reservation=f"{RESULTS}/{{study}}/{ANALYSIS_ID}/analysis_metadata.json",
-        annotation=lambda wc: "resources/generated/cds_gene_annotation.tsv" if wc.region == "cds" else "resources/generated/gene_annotation.tsv",
+        annotation=lambda wc: f"{GENERATED}/cds_gene_annotation.tsv" if wc.region == "cds" else f"{GENERATED}/gene_annotation.tsv",
         counts=lambda wc: [f"{WORK}/counts/rna/{library}.{wc.region}.tsv" for library, row in LIBRARIES.items() if row["study_id"] == wc.study and row["assay"] == "rna"],
     output:
         f"{RESULTS}/{{study}}/{ANALYSIS_ID}/counts/rna_{{region}}_counts.tsv"
@@ -731,7 +738,7 @@ rule rna_matrix:
     wildcard_constraints:
         region="cds|exon"
     shell:
-        "python3 workflow/scripts/combine_count_matrix.py --annotation {input.annotation:q} {params.args} --output {output:q}"
+        "python3 {SCRIPTS}/combine_count_matrix.py --annotation {input.annotation:q} {params.args} --output {output:q}"
 
 
 rule differential_analysis:
@@ -758,7 +765,7 @@ rule differential_analysis:
         R_IMAGE
     shell:
         """
-        Rscript workflow/scripts/differential_analysis.R --ribo {input.ribo:q} --rna-cds {input.rna_cds:q} \
+        Rscript {SCRIPTS}/differential_analysis.R --ribo {input.ribo:q} --rna-cds {input.rna_cds:q} \
           --rna-exon {input.rna_exon:q} --libraries {input.libraries:q} --decisions {input.decisions:q} \
           --contrasts {input.contrasts:q} --study {wildcards.study:q} --contrast {wildcards.contrast:q} \
           --outdir {params.outdir:q} --alpha {params.alpha} --lfc-threshold {params.lfc} \
@@ -785,7 +792,7 @@ rule finalize_study:
         lock=CONTAINER_LOCK,
     shell:
         """
-        python3 workflow/scripts/finalize_analysis.py --project-root . --result-dir {params.result_dir:q} \
+        python3 {SCRIPTS}/finalize_analysis.py --project-root {PIPELINE_ROOT:q} --result-dir {params.result_dir:q} \
           --study {wildcards.study:q} --analysis-id {ANALYSIS_ID:q} --config {CONFIG_FILE:q} \
           --metadata {SAMPLE_FILE:q} --metadata {CONTRAST_FILE:q} --metadata {DECISION_FILE:q} \
           --container-lock {params.lock:q} --provenance {output.provenance:q} \
@@ -802,6 +809,6 @@ rule cleanup_manifest:
         completion_args=" ".join(f"--completion {shlex.quote(path)}" for path in FINAL_SENTINELS)
     shell:
         """
-        python3 workflow/scripts/make_cleanup_manifest.py --project-root . --work-dir {WORK:q} \
+        python3 {SCRIPTS}/make_cleanup_manifest.py --project-root {PROJECT_ROOT:q} --work-dir {WORK:q} \
           --analysis-id {ANALYSIS_ID:q} {params.completion_args} --output {output:q}
         """

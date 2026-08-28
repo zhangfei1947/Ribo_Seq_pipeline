@@ -11,3 +11,7 @@
 - DESeq2 RNA/Ribo models and full-rank paired assay-by-condition DTE interaction.
 - Singularity definitions, Grace cluster-generic profile, provenance/checksums,
   HTML/static reports, and manifest-guarded cleanup.
+- Project-isolated workstation execution: `directories.generated` owns all derived
+  annotation/validation resources, while `directories.project_root` owns each
+  project's `.snakemake` state and temporary files. Pipeline-global mutable
+  symlinks are no longer required.
