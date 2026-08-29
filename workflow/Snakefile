@@ -617,7 +617,12 @@ rule multiqc:
     container:
         CORE
     shell:
-        "multiqc {RESULTS}/qc {WORK}/preprocessed {WORK}/alignment {WORK}/depleted --force --outdir {params.outdir:q} --filename multiqc_report.html"
+        """
+        python3 {SCRIPTS}/run_multiqc.py \
+          --search-path {RESULTS}/qc --search-path {WORK}/preprocessed \
+          --search-path {WORK}/alignment --search-path {WORK}/depleted \
+          --outdir {params.outdir:q} --filename multiqc_report.html
+        """
 
 
 rule count_ribo_psites:
