@@ -58,6 +58,9 @@ class ProjectIsolationTests(unittest.TestCase):
 
             self.assertIn(f"cwd={project_root}", completed.stdout)
             self.assertIn(f"--configfile {config.resolve()}", completed.stdout)
+            self.assertIn("--apptainer-args --cleanenv --bind", completed.stdout)
+            self.assertIn(str(ROOT), completed.stdout)
+            self.assertIn(str(project_root), completed.stdout)
             self.assertTrue((project_root / ".snakemake" / "tmp").is_dir())
             self.assertNotEqual(
                 (ROOT / ".snakemake" / "tmp").resolve(),

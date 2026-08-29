@@ -15,3 +15,5 @@
   annotation/validation resources, while `directories.project_root` owns each
   project's `.snakemake` state and temporary files. Pipeline-global mutable
   symlinks are no longer required.
+- Workstation Apptainer/Singularity execution explicitly binds the pipeline,
+  project inputs, metadata, and reference roots into the project-isolated home.

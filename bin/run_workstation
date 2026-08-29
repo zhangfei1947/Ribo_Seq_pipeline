@@ -39,7 +39,9 @@ fi
 config_file="$(realpath "${config_file}")"
 snakemake_arguments+=(--configfile "${config_file}")
 
-project_root="$(python3 - "${config_file}" <<'PY'
+config_values="$(python3 - "${config_file}" <<'PY'
+import csv
+import os
 from pathlib import Path
 import sys
 import yaml
@@ -53,9 +55,55 @@ if value:
         path = (config_path.parent / path).resolve()
 else:
     path = config_path.parent.parent
-print(path.resolve())
+project_root = path.resolve()
+
+
+def resolve_path(value):
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute():
+        candidate = config_path.parent / candidate
+    return candidate.resolve()
+
+
+def bind_anchor(candidate):
+    return candidate if candidate.is_dir() else candidate.parent
+
+
+bind_candidates = [project_root, config_path.parent]
+metadata = parsed.get("metadata", {})
+for metadata_path in metadata.values():
+    if isinstance(metadata_path, str) and metadata_path:
+        bind_candidates.append(bind_anchor(resolve_path(metadata_path)))
+
+sample_path = metadata.get("samples")
+if isinstance(sample_path, str) and resolve_path(sample_path).is_file():
+    with resolve_path(sample_path).open(newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle, delimiter="\t"):
+            for field in ("fastq1", "fastq2"):
+                if row.get(field):
+                    bind_candidates.append(bind_anchor(resolve_path(row[field])))
+
+reference_candidates = []
+for key, reference_path in parsed.get("reference", {}).items():
+    if key == "release" or not isinstance(reference_path, str) or not reference_path:
+        continue
+    reference_candidates.append(bind_anchor(resolve_path(reference_path)))
+if reference_candidates:
+    bind_candidates.append(Path(os.path.commonpath(reference_candidates)))
+
+unique_binds = []
+for candidate in bind_candidates:
+    candidate_text = str(candidate)
+    if candidate_text not in unique_binds:
+        unique_binds.append(candidate_text)
+
+print(project_root)
+print(",".join(unique_binds))
 PY
 )"
+project_root="${config_values%%$'\n'*}"
+config_bind_paths="${config_values#*$'\n'}"
+bind_paths="${pipeline_root},${config_bind_paths}"
 
 mkdir -p "${project_root}"
 cd "${project_root}"
@@ -67,4 +115,5 @@ export TMPDIR="${workstation_tmp}"
 exec snakemake \
   -s "${pipeline_root}/workflow/Snakefile" \
   --profile "${pipeline_root}/profiles/workstation" \
+  --apptainer-args "--cleanenv --bind ${bind_paths}" \
   "${snakemake_arguments[@]}"
